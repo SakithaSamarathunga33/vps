@@ -13,8 +13,9 @@ import {
   AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog"
+import { Terminal as CacheTerminal, AnimatedSpan } from "@/components/magicui/terminal"
 import { CONTAINERS as MOCK_CONTAINERS, HOST as MOCK_HOST } from "@/lib/mock-data"
-import { nodeApi } from "@/lib/api"
+import { nodeApi, API_BASE } from "@/lib/api"
 import { getSocket } from "@/lib/socket"
 import type { Container, ContainerStats, HostInfo, SystemMetrics } from "@/lib/types"
 import { Pill } from "@/components/dashboard/Pill"
@@ -423,6 +424,10 @@ export default function ContainersPage() {
   const [panel, setPanel]           = useState<{ type: "logs" | "terminal"; container: Container } | null>(null)
   const [actionBusy, setActionBusy] = useState<Record<string, boolean>>({})
   const [removeTarget, setRemoveTarget] = useState<Container | null>(null)
+  const [cacheOpen,  setCacheOpen]  = useState(false)
+  const [cacheLines, setCacheLines] = useState<string[]>([])
+  const [cacheState, setCacheState] = useState<"idle" | "running" | "done" | "error">("idle")
+  const cacheReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -527,6 +532,65 @@ export default function ContainersPage() {
     } catch {}
     setActionBusy(prev => ({ ...prev, [`remove-${c.id}`]: false }))
   }, [panel])
+
+  const handleClearCache = async () => {
+    setCacheLines(["$ docker builder prune -f"])
+    setCacheState("running")
+    setCacheOpen(true)
+
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/docker/build-cache/clear`,
+        { method: "POST" }
+      )
+      if (!res.body) throw new Error("No response body")
+
+      const reader = res.body.getReader()
+      cacheReaderRef.current = reader
+      const decoder = new TextDecoder()
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const chunk = decoder.decode(value, { stream: true })
+        const lines = chunk.split("\n")
+
+        for (const raw of lines) {
+          const trimmed = raw.trim()
+          if (!trimmed.startsWith("data:")) continue
+          try {
+            const payload = JSON.parse(trimmed.slice(5).trim())
+            if (payload.type === "line") {
+              setCacheLines(prev => [...prev, payload.text])
+            } else if (payload.type === "done") {
+              setCacheLines(prev => [...prev, "✔ Build cache cleared."])
+              setCacheState("done")
+            } else if (payload.type === "error") {
+              setCacheLines(prev => [...prev, `✗ ${payload.text}`])
+              setCacheState("error")
+            }
+          } catch {
+            // malformed SSE line — skip
+          }
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setCacheLines(prev => [...prev, `✗ ${msg}`])
+      setCacheState("error")
+    } finally {
+      setCacheState(prev => prev === "running" ? "done" : prev)
+    }
+  }
+
+  const handleCacheDialogClose = () => {
+    cacheReaderRef.current?.cancel()
+    cacheReaderRef.current = null
+    setCacheOpen(false)
+    setCacheState("idle")
+    setCacheLines([])
+  }
 
   useGSAP(() => {
     gsap.fromTo(
@@ -658,6 +722,15 @@ export default function ContainersPage() {
           <div className="mt-2 h-[3px] rounded-full overflow-hidden" style={{ background: "var(--bg-3)" }}>
             <div className="h-full rounded-full" style={{ width: `${host.disk.pct}%`, background: "var(--acc-2)" }} />
           </div>
+          <button
+            onClick={handleClearCache}
+            disabled={cacheState === "running"}
+            className="mt-3 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-50"
+            style={{ background: "var(--bad-soft)", border: "1px solid var(--bad)", color: "var(--bad)" }}
+          >
+            <Trash2 size={12} />
+            Clear Build Cache
+          </button>
         </div>
 
         {/* Network */}
@@ -904,6 +977,57 @@ export default function ContainersPage() {
           onClose={() => setRemoveTarget(null)}
         />
       )}
+
+      {/* ── Clear build cache dialog ── */}
+      <AlertDialog open={cacheOpen} onOpenChange={open => { if (!open) handleCacheDialogClose() }}>
+        <AlertDialogContent className="max-w-2xl p-0 overflow-hidden gap-0"
+          style={{ background: "var(--card-elev)", border: "1px solid var(--border-2)" }}>
+          <AlertDialogHeader className="px-5 pt-5 pb-0">
+            <AlertDialogTitle className="text-sm font-semibold flex items-center gap-2" style={{ color: "var(--fg)" }}>
+              <Trash2 size={14} style={{ color: "var(--bad)" }} />
+              Clear Docker Build Cache
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+
+          <div className="p-5">
+            <CacheTerminal
+              sequence={false}
+              startOnView={false}
+              className="max-w-full border-[var(--border-2)] bg-[var(--bg-2)]"
+            >
+              {cacheLines.map((line, i) => (
+                <AnimatedSpan
+                  key={i}
+                  className={
+                    line.startsWith("✔")
+                      ? "text-green-400 font-mono text-xs"
+                      : line.startsWith("✗")
+                      ? "text-red-400 font-mono text-xs"
+                      : "font-mono text-xs text-[var(--fg-3)]"
+                  }
+                >
+                  {line}
+                </AnimatedSpan>
+              ))}
+              {cacheState === "running" && (
+                <AnimatedSpan className="font-mono text-xs text-[var(--fg-3)]">
+                  <span className="animate-pulse">▋</span>
+                </AnimatedSpan>
+              )}
+            </CacheTerminal>
+          </div>
+
+          <AlertDialogFooter className="px-5 py-4 border-t bg-transparent rounded-none" style={{ borderColor: "var(--border)" }}>
+            <AlertDialogCancel
+              onClick={handleCacheDialogClose}
+              variant="outline"
+              className="text-xs"
+            >
+              {cacheState === "running" ? "Cancel" : "Close"}
+            </AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ── Side panel overlay ── */}
       {panel && (
