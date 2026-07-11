@@ -48,7 +48,16 @@ type Collector struct {
 	prevCPU  cpuTimes
 	prevNet  counters
 	prevDisk counters
+
+	procMu     sync.Mutex
+	prevProc   map[int]uint64 // pid -> utime+stime ticks, from the last Processes() call
+	prevProcAt time.Time
 }
+
+// clockTicksPerSec is USER_HZ, the unit /proc/[pid]/stat's utime/stime fields
+// are counted in. It's been 100 on virtually every Linux system for decades,
+// so it's hardcoded rather than pulled in via cgo's sysconf(_SC_CLK_TCK).
+const clockTicksPerSec = 100
 
 type cpuTimes struct {
 	total uint64
@@ -162,6 +171,18 @@ func (c *Collector) Processes() ([]Process, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	c.procMu.Lock()
+	defer c.procMu.Unlock()
+	now := time.Now()
+	elapsed := now.Sub(c.prevProcAt).Seconds()
+	prev := c.prevProc
+	next := make(map[int]uint64, len(entries))
+	cores := len(cpuCorePercents())
+	if cores == 0 {
+		cores = 1
+	}
+
 	out := []Process{}
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
@@ -174,9 +195,21 @@ func (c *Collector) Processes() ([]Process, error) {
 		}
 		status := readStatus(pid)
 		memMB := float64(status.rssKB) / 1024
+
+		ticks := stat.utime + stat.stime
+		next[pid] = ticks
+
+		// CPU% normalized against total capacity (all cores), matching how
+		// the system-wide CPU number is already framed elsewhere in this app.
 		cpu := 0.0
+		if prevTicks, ok := prev[pid]; ok && elapsed > 0 && ticks >= prevTicks {
+			cpu = float64(ticks-prevTicks) / clockTicksPerSec / elapsed / float64(cores) * 100
+		}
+
 		out = append(out, Process{PID: pid, Name: stat.name, CPU: round1(cpu), MemMB: round1(memMB), Status: status.state, User: status.user, Cmd: readCmdline(pid, stat.name), Type: "system"})
 	}
+	c.prevProc = next
+	c.prevProcAt = now
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].CPU == out[j].CPU {
 			return out[i].MemMB > out[j].MemMB
