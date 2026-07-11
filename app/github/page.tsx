@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Key, Unlink, RefreshCw, ExternalLink, ChevronRight, Shield, Webhook, Copy, Check, Eye, EyeOff, Puzzle, Trash2, Building2, User as UserIcon } from "lucide-react"
+import { Key, Unlink, RefreshCw, ExternalLink, ChevronRight, Shield, Webhook, Copy, Check, Eye, EyeOff } from "lucide-react"
 import { GitHubDark } from "developer-icons"
 import Link from "next/link"
 import { copyText } from "@/lib/utils"
@@ -10,8 +10,6 @@ const GO_API = process.env.NEXT_PUBLIC_GO_API ?? ""
 
 type Account = { login: string; avatarUrl: string; tokenType: "oauth" | "pat" }
 type OAuthSettings = { clientId: string; hasSecret: boolean; configured: boolean }
-type AppSettings = { configured: boolean; appId: string; slug: string; hasKey: boolean }
-type AppInstallation = { id: number; installationId: number; accountLogin: string; accountType: string; createdAt: string }
 
 export default function GitHubPage() {
   const [account, setAccount]             = useState<Account | null>(null)
@@ -30,20 +28,7 @@ export default function GitHubPage() {
   const [webhookSecret, setWebhookSecret] = useState("")
   const [showSecret, setShowSecret]       = useState(false)
   const [copied, setCopied]               = useState<string | null>(null)
-
-  // GitHub App state
-  const [appSettings, setAppSettings]           = useState<AppSettings | null>(null)
-  const [appInstallations, setAppInstallations] = useState<AppInstallation[]>([])
-  const [appId, setAppId]                       = useState("")
-  const [appSlug, setAppSlug]                   = useState("")
-  const [appPrivateKey, setAppPrivateKey]       = useState("")
-  const [appWebhookSecret, setAppWebhookSecret] = useState("")
-  const [appSaving, setAppSaving]               = useState(false)
-  const [appSaved, setAppSaved]                 = useState(false)
-  const [appSaveError, setAppSaveError]         = useState("")
-  const [appBanner, setAppBanner]               = useState<string | null>(null)
   const [showOAuthSettings, setShowOAuthSettings] = useState(false)
-  const [showAppConfig, setShowAppConfig]         = useState(false)
 
   const fetchAccount = useCallback(async () => {
     try {
@@ -69,46 +54,14 @@ export default function GitHubPage() {
     } catch { /* ignore */ }
   }, [])
 
-  const fetchAppSettings = useCallback(async () => {
-    try {
-      const r = await fetch(`${GO_API}/api/github/app/settings`)
-      const d: AppSettings = await r.json()
-      setAppSettings(d)
-      setAppId(d.appId ?? "")
-      setAppSlug(d.slug ?? "")
-    } catch { setAppSettings(null) }
-  }, [])
-
-  const fetchAppInstallations = useCallback(async () => {
-    try {
-      const r = await fetch(`${GO_API}/api/github/app/installations`)
-      setAppInstallations((await r.json()) ?? [])
-    } catch { setAppInstallations([]) }
-  }, [])
-
   useEffect(() => {
     Promise.all([
       fetchAccount(), fetchOAuthSettings(), fetchWebhook(),
-      fetchAppSettings(), fetchAppInstallations(),
     ]).finally(() => setLoading(false))
 
     const params = new URLSearchParams(window.location.search)
     if (params.get("connected") === "1") window.history.replaceState({}, "", "/github")
-    if (params.get("app_installed") === "1") {
-      setAppBanner("installed")
-      fetchAppInstallations()
-      window.history.replaceState({}, "", "/github")
-    }
-    if (params.get("app_uninstalled") === "1") {
-      setAppBanner("uninstalled")
-      fetchAppInstallations()
-      window.history.replaceState({}, "", "/github")
-    }
-    if (params.get("app_error")) {
-      setAppBanner("error:" + params.get("app_error"))
-      window.history.replaceState({}, "", "/github")
-    }
-  }, [fetchAccount, fetchOAuthSettings, fetchWebhook, fetchAppSettings, fetchAppInstallations])
+  }, [fetchAccount, fetchOAuthSettings, fetchWebhook])
 
   const copy = async (value: string, key: string) => {
     if (await copyText(value)) {
@@ -117,41 +70,6 @@ export default function GitHubPage() {
     }
   }
   const webhookUrl = typeof window !== "undefined" ? `${window.location.origin}${GO_API}/api/github/webhook` : ""
-  const appCallbackURL = typeof window !== "undefined" ? `${window.location.origin}/github/app/callback` : ""
-
-  const saveAppSettings = async () => {
-    setAppSaving(true); setAppSaveError("")
-    try {
-      const r = await fetch(`${GO_API}/api/github/app/settings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appId, slug: appSlug, privateKey: appPrivateKey, webhookSecret: appWebhookSecret }),
-      })
-      const d = await r.json()
-      if (!r.ok) { setAppSaveError(d.error ?? "Failed"); return }
-      setAppPrivateKey(""); setAppWebhookSecret("")
-      setAppSaved(true)
-      await fetchAppSettings()
-      setTimeout(() => setAppSaved(false), 3000)
-    } catch { setAppSaveError("Network error") }
-    finally { setAppSaving(false) }
-  }
-
-  const installApp = async () => {
-    const r = await fetch(`${GO_API}/api/github/app/install-url`)
-    const d = await r.json()
-    if (d.url) {
-      // Encode the current instance's origin so the callback page can relay
-      // back here when the GitHub App's Setup URL points to a different instance.
-      const state = btoa(window.location.origin)
-      window.location.href = `${d.url}?state=${encodeURIComponent(state)}`
-    }
-  }
-
-  const removeInstallation = async (id: number) => {
-    await fetch(`${GO_API}/api/github/app/installations/${id}`, { method: "DELETE" })
-    await fetchAppInstallations()
-  }
 
   const connectOAuth = async () => {
     const r = await fetch(`${GO_API}/api/github/auth-url`)
@@ -287,9 +205,25 @@ export default function GitHubPage() {
                   <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer"
                     className="underline" style={{ color: "var(--acc)" }}>
                     github.com/settings/tokens <ExternalLink size={10} className="inline" />
-                  </a>{" "}
-                  with <code className="text-xs px-1 py-0.5 rounded" style={{ background: "var(--bg-3)" }}>repo</code> scope.
+                  </a>.
                 </p>
+                <div className="rounded-lg p-3 space-y-2" style={{ background: "var(--bg-3)" }}>
+                  <p className="text-xs font-medium" style={{ color: "var(--fg)" }}>
+                    Classic token <span style={{ color: "var(--fg-3)", fontWeight: 400 }}>(recommended, simplest)</span>
+                  </p>
+                  <p className="text-xs" style={{ color: "var(--fg-3)" }}>
+                    Enable the <code className="px-1 py-0.5 rounded" style={{ background: "var(--bg-2)" }}>repo</code> scope.
+                    This one scope covers reading/cloning private repos and auto-installing the deploy webhook.
+                  </p>
+                  <p className="text-xs font-medium pt-1" style={{ color: "var(--fg)" }}>
+                    Fine-grained token <span style={{ color: "var(--fg-3)", fontWeight: 400 }}>(per-repo access)</span>
+                  </p>
+                  <ul className="text-xs space-y-0.5" style={{ color: "var(--fg-3)" }}>
+                    <li>• <span style={{ color: "var(--fg)" }}>Contents</span> — Read-only (clone the repo)</li>
+                    <li>• <span style={{ color: "var(--fg)" }}>Metadata</span> — Read-only (mandatory, auto-selected)</li>
+                    <li>• <span style={{ color: "var(--fg)" }}>Webhooks</span> — Read and write (auto-install push deploys)</li>
+                  </ul>
+                </div>
                 <input
                   type="password"
                   placeholder="ghp_xxxxxxxxxxxx"
@@ -389,174 +323,6 @@ export default function GitHubPage() {
             </div>
           )}
         </div>
-      </div>
-
-      {/* GitHub App */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: "var(--fg-3)" }}>
-            GitHub App <span className="ml-2 text-xs px-2 py-0.5 rounded-full font-medium normal-case tracking-normal"
-              style={{ background: "color-mix(in srgb, var(--acc) 15%, transparent)", color: "var(--acc)" }}>Recommended</span>
-          </h2>
-        </div>
-
-        {appBanner && (
-          <div className="rounded-xl px-4 py-3 text-sm flex items-center gap-2"
-            style={{
-              background: appBanner === "installed" ? "color-mix(in srgb, var(--ok) 12%, transparent)"
-                        : appBanner === "uninstalled" ? "color-mix(in srgb, var(--warn) 12%, transparent)"
-                        : "color-mix(in srgb, var(--err) 12%, transparent)",
-              border: `1px solid ${appBanner === "installed" ? "color-mix(in srgb, var(--ok) 25%, transparent)"
-                        : appBanner === "uninstalled" ? "color-mix(in srgb, var(--warn) 25%, transparent)"
-                        : "color-mix(in srgb, var(--err) 25%, transparent)"}`,
-              color: appBanner === "installed" ? "var(--ok)" : appBanner === "uninstalled" ? "var(--warn)" : "var(--err)",
-            }}>
-            {appBanner === "installed" ? "✓ GitHub App installed successfully." : appBanner === "uninstalled" ? "App uninstalled." : `Install error: ${appBanner.replace("error:", "")}`}
-          </div>
-        )}
-
-        <div className={`grid gap-6 items-start ${(!appSettings?.slug || showAppConfig) ? "lg:grid-cols-[1fr_420px]" : ""}`}>
-          {/* Left — installations */}
-          <div className="space-y-4">
-            <div className="rounded-xl p-5 space-y-4" style={{ background: "var(--bg-2)", border: "1px solid var(--border)" }}>
-              <div className="flex items-center gap-2">
-                <Puzzle size={16} style={{ color: "var(--fg)" }} />
-                <p className="font-medium text-sm" style={{ color: "var(--fg)" }}>Installations</p>
-                {appSettings?.slug && appInstallations.length > 0 && (
-                  <button onClick={installApp}
-                    className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
-                    style={{ background: "var(--acc)", color: "#fff" }}>
-                    <ExternalLink size={11} /> Install on more repos
-                  </button>
-                )}
-              </div>
-
-              {!appSettings?.slug ? (
-                <p className="text-xs" style={{ color: "var(--fg-3)" }}>
-                  Configure your GitHub App on the right, then click <strong>Install App</strong> to grant access to repos.
-                  Once installed, PulseNode receives push webhooks automatically for every repo — no per-repo hook setup needed.
-                </p>
-              ) : appInstallations.length === 0 ? (
-                <div className="space-y-3">
-                  <p className="text-xs" style={{ color: "var(--fg-3)" }}>
-                    No installations yet. Click <strong>Install App</strong> to pick which accounts/repos to grant access to.
-                  </p>
-                  <button onClick={installApp}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium"
-                    style={{ background: "var(--fg)", color: "var(--bg-1)" }}>
-                    <GitHubDark size={15} /> Install GitHub App
-                  </button>
-                </div>
-              ) : (
-                <ul className="space-y-2">
-                  {appInstallations.map(inst => (
-                    <li key={inst.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg"
-                      style={{ background: "var(--bg-3)", border: "1px solid var(--border)" }}>
-                      {inst.accountType === "Organization"
-                        ? <Building2 size={14} style={{ color: "var(--fg-3)" }} />
-                        : <UserIcon size={14} style={{ color: "var(--fg-3)" }} />}
-                      <span className="text-sm font-medium flex-1" style={{ color: "var(--fg)" }}>
-                        {inst.accountLogin === "unknown" ? "Connected" : inst.accountLogin}
-                      </span>
-                      {inst.accountLogin !== "unknown" && (
-                        <span className="text-xs" style={{ color: "var(--fg-3)" }}>{inst.accountType}</span>
-                      )}
-                      <button onClick={() => removeInstallation(inst.id)} title="Remove" style={{ color: "var(--fg-3)" }}
-                        className="hover:opacity-70 transition-opacity">
-                        <Trash2 size={13} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          {/* Right — App config (hidden when already configured) */}
-          {(!appSettings?.slug || showAppConfig) && (
-          <div className="space-y-4">
-            <div className="rounded-xl p-5 space-y-4" style={{ background: "var(--bg-2)", border: "1px solid var(--border)" }}>
-              <div className="flex items-center gap-2">
-                <Shield size={16} style={{ color: "var(--fg)" }} />
-                <p className="font-medium text-sm" style={{ color: "var(--fg)" }}>GitHub App Settings</p>
-              </div>
-              {!appSettings?.slug && (
-                <p className="text-xs" style={{ color: "var(--fg-3)" }}>
-                  Create a GitHub App at{" "}
-                  <a href="https://github.com/settings/apps/new" target="_blank" rel="noopener noreferrer"
-                    className="underline" style={{ color: "var(--acc)" }}>
-                    github.com/settings/apps/new <ExternalLink size={10} className="inline" />
-                  </a>.
-                  Set <strong>Setup URL</strong> to{" "}
-                  <code className="text-xs px-1 rounded" style={{ background: "var(--bg-3)" }}>{appCallbackURL}</code>{" "}
-                  and the <strong>Webhook URL</strong> to{" "}
-                  <code className="text-xs px-1 rounded" style={{ background: "var(--bg-3)" }}>{webhookUrl}</code>.
-                  Permissions needed: <em>Contents</em> (read), <em>Metadata</em> (read), <em>Webhooks</em> (read/write). Subscribe to: <em>Push</em>.
-                </p>
-              )}
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs mb-1.5 block font-medium" style={{ color: "var(--fg-3)" }}>App ID</label>
-                  <input type="text" placeholder="123456" value={appId} onChange={e => setAppId(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-                    style={{ background: "var(--bg-3)", color: "var(--fg)", border: "1px solid var(--border)" }} />
-                </div>
-                <div>
-                  <label className="text-xs mb-1.5 block font-medium" style={{ color: "var(--fg-3)" }}>App Slug (from app URL)</label>
-                  <input type="text" placeholder="my-pulsenode-app" value={appSlug} onChange={e => setAppSlug(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-                    style={{ background: "var(--bg-3)", color: "var(--fg)", border: "1px solid var(--border)" }} />
-                </div>
-                <div>
-                  <label className="text-xs mb-1.5 block font-medium" style={{ color: "var(--fg-3)" }}>
-                    Private Key (PEM){appSettings?.hasKey && <span className="ml-2" style={{ color: "var(--ok)" }}>(already set)</span>}
-                  </label>
-                  <textarea rows={3} placeholder={appSettings?.hasKey ? "Leave blank to keep existing" : "-----BEGIN RSA PRIVATE KEY-----\n..."}
-                    value={appPrivateKey} onChange={e => setAppPrivateKey(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg text-xs font-mono outline-none resize-none"
-                    style={{ background: "var(--bg-3)", color: "var(--fg)", border: "1px solid var(--border)" }} />
-                </div>
-                <div>
-                  <label className="text-xs mb-1.5 block font-medium" style={{ color: "var(--fg-3)" }}>
-                    Webhook Secret{appSettings?.configured && <span className="ml-2" style={{ color: "var(--ok)" }}>(already set)</span>}
-                  </label>
-                  <input type="password" placeholder={appSettings?.configured ? "Leave blank to keep existing" : "Your app's webhook secret"}
-                    value={appWebhookSecret} onChange={e => setAppWebhookSecret(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-                    style={{ background: "var(--bg-3)", color: "var(--fg)", border: "1px solid var(--border)" }} />
-                </div>
-              </div>
-              {appSaveError && <p className="text-xs" style={{ color: "var(--err)" }}>{appSaveError}</p>}
-              <button onClick={saveAppSettings} disabled={appSaving || (!appId || !appSlug)}
-                className="w-full py-2.5 rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
-                style={{ background: "var(--acc)", color: "#fff" }}>
-                {appSaved ? "Saved!" : appSaving ? "Saving…" : "Save App Settings"}
-              </button>
-            </div>
-
-            <div className="rounded-xl p-4 space-y-2" style={{ background: "var(--bg-2)", border: "1px solid var(--border)" }}>
-              <p className="text-xs font-medium" style={{ color: "var(--fg-3)" }}>Why GitHub App?</p>
-              <ul className="text-xs space-y-1" style={{ color: "var(--fg-3)" }}>
-                <li>• Install once → all repos in the account covered</li>
-                <li>• No per-repo admin rights needed to receive webhooks</li>
-                <li>• Higher API rate limits (installation tokens)</li>
-                <li>• Works on org repos without a personal token</li>
-              </ul>
-            </div>
-          </div>
-          )}
-        </div>
-        {appSettings?.slug && (
-          <div className="flex justify-end -mt-2">
-            <button
-              onClick={() => setShowAppConfig(s => !s)}
-              className="text-xs"
-              style={{ color: "var(--fg-3)" }}
-            >
-              {showAppConfig ? "Hide App settings" : "Edit App settings"}
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Webhooks — instant auto-deploy on push */}
