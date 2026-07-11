@@ -73,6 +73,7 @@ func main() {
 	go streamSystemMetrics(ctx, collector, events)
 	go streamContainerStats(ctx, dockerClient, events)
 	go jobQueue.StartPoller(ctx, pollInterval())
+	go recordContainerHeartbeats(ctx, dockerClient, database)
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,
@@ -121,6 +122,42 @@ func streamContainerStats(ctx context.Context, dockerClient *docker.Client, even
 			stats, err := dockerClient.ContainerStats(ctx)
 			if err == nil {
 				events.Broadcast("container:stats", stats)
+			}
+		}
+	}
+}
+
+// heartbeatRetention is how long container_heartbeats rows are kept before
+// being pruned — matches the longest range the Uptime tab can select (7d).
+const heartbeatRetention = 7 * 24 * time.Hour
+
+// recordContainerHeartbeats snapshots every container's up/down state once a
+// minute so the Uptime tab can show real history instead of just what
+// accumulated since the page was opened.
+func recordContainerHeartbeats(ctx context.Context, dockerClient *docker.Client, database *db.DB) {
+	if dockerClient == nil {
+		return
+	}
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			containers, err := dockerClient.Containers(ctx)
+			if err != nil {
+				continue
+			}
+			beats := make([]db.Heartbeat, 0, len(containers))
+			for _, c := range containers {
+				beats = append(beats, db.Heartbeat{ContainerName: c.Name, Up: c.State == "running"})
+			}
+			if err := database.InsertHeartbeats(beats); err != nil {
+				log.Warn().Err(err).Msg("failed to record container heartbeats")
+			}
+			if err := database.PruneHeartbeats(time.Now().Add(-heartbeatRetention)); err != nil {
+				log.Warn().Err(err).Msg("failed to prune container heartbeats")
 			}
 		}
 	}

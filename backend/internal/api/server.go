@@ -113,6 +113,7 @@ func (s *Server) Routes() http.Handler {
 		r.Use(s.requireAuth)
 		r.Get("/docker/containers", s.dockerContainers)
 		r.Get("/docker/container-stats", s.containerStats)
+		r.Get("/docker/heartbeats", s.dockerHeartbeats)
 		r.Get("/docker/images", s.dockerImages)
 		r.Get("/docker/networks", s.dockerNetworks)
 		r.Get("/docker/databases", s.dockerDatabases)

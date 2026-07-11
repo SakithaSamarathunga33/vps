@@ -191,6 +191,17 @@ CREATE TABLE IF NOT EXISTS domains (
   last_checked_at DATETIME,
   created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Keyed by container name rather than container ID: recreating a container
+-- (redeploys, restarts via compose) assigns a new ID but keeps the same name,
+-- so name is what stays continuous across the history a heartbeat graph needs.
+CREATE TABLE IF NOT EXISTS container_heartbeats (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  container_name TEXT NOT NULL,
+  up             INTEGER NOT NULL,
+  checked_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_heartbeats_name_time ON container_heartbeats(container_name, checked_at);
 `)
 	if err != nil {
 		return err
@@ -1063,4 +1074,64 @@ func (d *DB) PrimaryDomain() (string, error) {
 		return "", nil
 	}
 	return host, err
+}
+
+// ── Container Heartbeats ────────────────────────────────────────────────────────
+
+// Heartbeat is one recorded up/down check for a container, identified by name.
+type Heartbeat struct {
+	ContainerName string    `json:"containerName"`
+	Up            bool      `json:"up"`
+	CheckedAt     time.Time `json:"checkedAt"`
+}
+
+// InsertHeartbeats records one row per container in a single transaction.
+func (d *DB) InsertHeartbeats(beats []Heartbeat) error {
+	if len(beats) == 0 {
+		return nil
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`INSERT INTO container_heartbeats (container_name, up) VALUES (?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, b := range beats {
+		if _, err := stmt.Exec(b.ContainerName, b.Up); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ListHeartbeatsSince returns every recorded check at or after `since`, ordered
+// by container name then time, for the caller to group per-container.
+func (d *DB) ListHeartbeatsSince(since time.Time) ([]Heartbeat, error) {
+	rows, err := d.Query(`SELECT container_name, up, checked_at FROM container_heartbeats WHERE checked_at >= ? ORDER BY container_name, checked_at`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Heartbeat
+	for rows.Next() {
+		var h Heartbeat
+		var up int
+		if err := rows.Scan(&h.ContainerName, &up, &h.CheckedAt); err != nil {
+			return nil, err
+		}
+		h.Up = up == 1
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// PruneHeartbeats deletes rows older than `before`, keeping the table bounded
+// to the retention window.
+func (d *DB) PruneHeartbeats(before time.Time) error {
+	_, err := d.Exec(`DELETE FROM container_heartbeats WHERE checked_at < ?`, before)
+	return err
 }

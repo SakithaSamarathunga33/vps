@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -164,4 +165,54 @@ func (s *Server) clearBuildCache(w http.ResponseWriter, r *http.Request) {
 	}
 	send(fmt.Sprintf(`{"type":"line","text":"Space reclaimed: %.1f MB"}`, float64(reclaimed)/1024/1024))
 	send(`{"type":"done"}`)
+}
+
+type heartbeatPoint struct {
+	Up bool      `json:"up"`
+	At time.Time `json:"at"`
+}
+
+type containerHeartbeats struct {
+	Name  string           `json:"name"`
+	Beats []heartbeatPoint `json:"beats"`
+}
+
+// dockerHeartbeats returns each currently-existing container's recorded
+// up/down history for the requested window (?since=24h|3d|7d, default 24h).
+func (s *Server) dockerHeartbeats(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDocker(w) {
+		return
+	}
+	window := 24 * time.Hour
+	switch r.URL.Query().Get("since") {
+	case "3d":
+		window = 3 * 24 * time.Hour
+	case "7d":
+		window = 7 * 24 * time.Hour
+	}
+
+	containers, err := s.docker.Containers(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	beats, err := s.db.ListHeartbeatsSince(time.Now().Add(-window))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	byName := make(map[string][]heartbeatPoint, len(containers))
+	for _, b := range beats {
+		byName[b.ContainerName] = append(byName[b.ContainerName], heartbeatPoint{Up: b.Up, At: b.CheckedAt})
+	}
+
+	out := make([]containerHeartbeats, 0, len(containers))
+	for _, c := range containers {
+		points := byName[c.Name]
+		if points == nil {
+			points = []heartbeatPoint{}
+		}
+		out = append(out, containerHeartbeats{Name: c.Name, Beats: points})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
