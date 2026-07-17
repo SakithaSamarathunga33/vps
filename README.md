@@ -1,24 +1,41 @@
-# PulseNode
+<div align="center">
 
-A self-hosted VPS monitoring dashboard — containers, system stats, processes, databases, networks, images, live metrics, deploy projects from GitHub, and more. All from one clean interface.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.png">
+  <img src="docs/images/logo-light.png" alt="PulseNode" width="420">
+</picture>
 
-![PulseNode dashboard](public/Screenshot%202026-05-20%20065221.png)
+**Open-source VPS control panel — monitor your server, manage Docker, deploy GitHub projects, and secure containers from one dashboard.**
+
+[![Release](https://img.shields.io/github/v/release/SakithaSamarathunga33/PulseNode?color=2563eb&label=release)](https://github.com/SakithaSamarathunga33/PulseNode/releases/latest)
+[![Build](https://github.com/SakithaSamarathunga33/PulseNode/actions/workflows/release.yml/badge.svg)](https://github.com/SakithaSamarathunga33/PulseNode/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/backend-Go-00ADD8?logo=go&logoColor=white)](backend/)
+[![Next.js](https://img.shields.io/badge/frontend-Next.js%2014-black?logo=next.js)](app/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+[Install](#one-command-install) · [Features](#features) · [Why PulseNode?](#why-pulsenode) · [Configuration](#configuration) · [Roadmap](#roadmap) · [Contributing](#contributing)
+
+![PulseNode dashboard](docs/images/pulsenode-dashboard.png)
+
+</div>
 
 ---
 
 ## One-command install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SakithaSamarathunga33/vps/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SakithaSamarathunga33/PulseNode/main/install.sh | bash
 ```
 
 The script:
 1. Checks Docker and Docker Compose v2 are installed
 2. Clones the repo into `~/pulsenode` (or `/opt/pulsenode` when run as root)
 3. Detects your server's public IP — one prompt to confirm
-4. Optionally sets Coolify API URL and token
-5. Writes the config, builds all Docker images, starts everything behind Caddy on port 80
-6. Polls until services are ready, then prints your clickable dashboard URL
+4. **Asks you to create an admin login** so your dashboard isn't left open to the internet
+5. Optionally sets Coolify API URL and token
+6. Writes the config, pulls pre-built images (or builds from source), starts everything behind Caddy on port 80
+7. Polls until services are ready, then prints your clickable dashboard URL
 
 When it finishes you'll see:
 
@@ -26,19 +43,9 @@ When it finishes you'll see:
   ✓  PulseNode is live!
 
   Open in browser  →  http://YOUR_IP/
-
-  Quick links:
-    http://YOUR_IP/containers
-    http://YOUR_IP/stats
-    http://YOUR_IP/processes
-    http://YOUR_IP/databases
-    http://YOUR_IP/images
-    http://YOUR_IP/alerts
-    http://YOUR_IP/settings
-    http://YOUR_IP/github
 ```
 
-**Re-running the same command updates an existing install** (git pull + rebuild).
+**Re-running the same command updates an existing install** (git pull + rebuild, your login and data are kept).
 
 ### Requirements
 
@@ -49,6 +56,41 @@ When it finishes you'll see:
 | git | any |
 | Linux VPS | Any distro with Docker |
 | Open port | 80 (or 443 for HTTPS) |
+
+---
+
+## Features
+
+- ⚡ **One-command install** — from empty VPS to live dashboard in minutes, updates the same way
+- 📊 **Live system metrics** — CPU, RAM, disk I/O, and network streamed over WebSocket/SSE, read straight from `/proc`
+- 🐳 **Full Docker management** — containers, images, networks, logs, stats, and an in-browser shell
+- 🚀 **Deploy from GitHub** — connect a repo and deploy on push: Dockerfile, Docker Compose, Nixpacks auto-builds, and `frontend/` + `backend/` monorepos
+- 🔄 **Zero-downtime deploys with rollback** — new containers are health-checked before old ones are removed; one click rolls back to any previous build
+- 🗄️ **Database management** — spin up and manage PostgreSQL, MySQL, MongoDB, and Redis, or connect existing databases
+- 🛡️ **Container security scanning** — Trivy vulnerability scans and Syft SBOMs, per container
+- 🔔 **Alerts** — threshold rules on CPU, RAM, and disk with notification channels
+- 🌐 **Automatic HTTPS** — Caddy terminates TLS with Let's Encrypt; per-project custom domains
+- 🧩 **Coolify integration** — see your Coolify projects and deployments alongside everything else
+- 🔐 **Login protection** — bcrypt-hashed admin account, httpOnly JWT sessions, full-dashboard auth gate
+- 📈 **Process explorer** — live host process list with real per-process CPU and memory
+
+---
+
+## Why PulseNode?
+
+Running a single VPS usually means juggling three or four tools — one for metrics, one for Docker, one for deployments. PulseNode is one dashboard for the whole box.
+
+| | PulseNode | Portainer | Netdata | Coolify |
+|---|:---:|:---:|:---:|:---:|
+| Live host metrics (CPU/RAM/disk/net) | ✅ | ❌ | ✅ | ➖ basic |
+| Docker containers / images / networks | ✅ | ✅ | ➖ view only | ➖ |
+| Git push-to-deploy with rollback | ✅ | ➖ stacks | ❌ | ✅ |
+| Container vulnerability scanning + SBOMs | ✅ | ❌ | ❌ | ❌ |
+| Database provisioning & management | ✅ | ❌ | ❌ | ✅ |
+| Alerts on host resources | ✅ | ❌ | ✅ | ❌ |
+| Single-command install | ✅ | ➖ | ✅ | ✅ |
+
+PulseNode doesn't try to manage a fleet of a hundred nodes — it's built to be *the* dashboard for the one or two servers you actually run.
 
 ---
 
@@ -68,7 +110,7 @@ Caddy :80 (or :443 with auto-TLS)
 
 The Go API mounts `/var/run/docker.sock` and runs in the host PID namespace (`pid: host`) to read real host CPU, RAM, disk I/O, and network stats from `/proc`.
 
-All data is persisted in a single SQLite database (`pulsenode.db`) — credentials, alert rules, audit logs, deployed projects, and the optional admin account.
+All data is persisted in a single SQLite database (`pulsenode.db`) — credentials, alert rules, audit logs, deployed projects, and the admin account.
 
 All internal services bind on the Docker-internal network only — Caddy is the sole public entry point.
 
@@ -77,7 +119,7 @@ All internal services bind on the Docker-internal network only — Caddy is the 
 ## Manual deploy
 
 ```bash
-git clone https://github.com/SakithaSamarathunga33/vps.git ~/pulsenode
+git clone https://github.com/SakithaSamarathunga33/PulseNode.git ~/pulsenode
 cd ~/pulsenode
 ./deploy.sh
 ```
@@ -115,7 +157,7 @@ JWT_SECRET=<auto-generated>
 AES_KEY=<auto-generated>
 MASTER_ENCRYPTION_KEY=<auto-generated>
 
-# Optional — enable login protection (see Security section below)
+# Optional — require a bearer token on all API routes
 GO_API_AUTH=false
 
 # Optional integrations
@@ -127,9 +169,9 @@ COOLIFY_API_TOKEN=
 
 ## Login / Security
 
-By default PulseNode is open — no login required. If your VPS is exposed to the internet you can enable login protection from the dashboard itself.
+PulseNode can control Docker, host processes, databases, and deployments — **always protect it with a login when the dashboard is reachable from the internet.**
 
-**To set up a login:**
+The installer asks you to create an admin account during setup. If you skipped it (or deployed manually):
 
 1. Open the dashboard → **Settings** → **Security**
 2. Enter a username and password (minimum 8 characters)
@@ -137,11 +179,13 @@ By default PulseNode is open — no login required. If your VPS is exposed to th
 
 Once enabled:
 - The entire dashboard is protected — the login page appears for unauthenticated visitors
+- Passwords are stored bcrypt-hashed; sessions are httpOnly JWT cookies
 - Sessions last **30 minutes of inactivity** and refresh automatically while you're active
-- Sessions persist across browser restarts (httpOnly cookie)
 - You can change or remove the password from the same **Settings → Security** panel
 
 No `.env.local` changes are needed — the setting is stored in the SQLite database and takes effect immediately.
+
+Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -191,7 +235,7 @@ The overlay attaches Caddy to the Traefik network and adds the correct router la
 ## Architecture
 
 ```
-vps/
+pulsenode/
 ├─ app/                   Next.js 14 app router pages
 │   ├─ containers/        Docker container list and shell access
 │   ├─ stats/             CPU, RAM, disk I/O, network charts (live)
@@ -212,6 +256,7 @@ vps/
 │   ├─ internal/docker/   Docker SDK client — containers, images, networks, exec
 │   ├─ internal/db/       SQLite store — credentials, alerts, audit log, users
 │   ├─ internal/caddy/    Caddy Admin API client (route management)
+│   ├─ internal/builder/  Build pipeline — Dockerfile, Nixpacks, Compose, monorepo
 │   ├─ internal/queue/    Async deploy job queue
 │   └─ internal/security/ Container security scanning (Trivy / Syft)
 ├─ components/            Sidebar, stat cards, charts, UI primitives
@@ -251,10 +296,49 @@ vps/
 
 ```bash
 # If installed via install.sh — just re-run it:
-curl -fsSL https://raw.githubusercontent.com/SakithaSamarathunga33/vps/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SakithaSamarathunga33/PulseNode/main/install.sh | bash
 
 # Or manually:
 cd ~/pulsenode
 git pull
 docker compose -f docker-compose.yml -f docker-compose.standalone.yml up -d --build
 ```
+
+Or use the built-in updater: **Settings → Check for updates**.
+
+---
+
+## Roadmap
+
+- [ ] Two-factor authentication (TOTP)
+- [ ] Multi-server monitoring from one dashboard
+- [ ] Scheduled database backups
+- [ ] More alert channels (Slack, Discord, Telegram)
+- [ ] Pre-built ARM64 images
+- [ ] Metrics history retention settings
+
+Have an idea? [Open an issue](https://github.com/SakithaSamarathunga33/PulseNode/issues/new/choose) — roadmap priorities follow community demand.
+
+---
+
+## Contributing
+
+Contributions are welcome — from typo fixes to new features. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup and PR guidelines, and check the [good first issues](https://github.com/SakithaSamarathunga33/PulseNode/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+
+- 🐛 [Report a bug](https://github.com/SakithaSamarathunga33/PulseNode/issues/new/choose)
+- 💡 [Request a feature](https://github.com/SakithaSamarathunga33/PulseNode/issues/new/choose)
+- 🔐 [Report a security issue](SECURITY.md)
+
+---
+
+## License
+
+PulseNode is open source under the [MIT License](LICENSE).
+
+---
+
+<div align="center">
+
+**If PulseNode saves you time, [give it a star ⭐](https://github.com/SakithaSamarathunga33/PulseNode) — it helps other self-hosters find it.**
+
+</div>

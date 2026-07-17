@@ -1,0 +1,46 @@
+name: 🐛 Bug report
+description: Something in PulseNode isn't working right
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! **Security vulnerabilities:** please don't file them here — see [SECURITY.md](../blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: "I clicked Deploy on a project and..."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See error
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PulseNode version
+      description: Shown in Settings → Updates (or `git describe --tags` in the install dir)
+      placeholder: v1.46.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS/distro, Docker version, how you installed (install.sh / manual / Traefik overlay)
+      placeholder: "Ubuntu 24.04, Docker 26.1, install.sh"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "`docker compose logs go-api web caddy` output around the failure, or browser console errors. Redact secrets."
+      render: shell

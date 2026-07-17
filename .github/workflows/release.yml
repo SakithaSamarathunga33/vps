@@ -53,8 +53,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/${{ env.OWNER }}/vps-web:latest
-            ghcr.io/${{ env.OWNER }}/vps-web:${{ steps.tag.outputs.new_tag }}
+            ghcr.io/${{ env.OWNER }}/pulsenode-web:latest
+            ghcr.io/${{ env.OWNER }}/pulsenode-web:${{ steps.tag.outputs.new_tag }}
 
       - name: Build and push go-api
         uses: docker/build-push-action@v5
@@ -65,8 +65,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/${{ env.OWNER }}/vps-go-api:latest
-            ghcr.io/${{ env.OWNER }}/vps-go-api:${{ steps.tag.outputs.new_tag }}
+            ghcr.io/${{ env.OWNER }}/pulsenode-go-api:latest
+            ghcr.io/${{ env.OWNER }}/pulsenode-go-api:${{ steps.tag.outputs.new_tag }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -78,7 +78,7 @@ jobs:
 
             ### One-command install
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/SakithaSamarathunga33/vps/main/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/SakithaSamarathunga33/PulseNode/main/install.sh | bash
             ```
 
             When the installer finishes, it prints your dashboard URL — open it and you're live.
@@ -87,8 +87,8 @@ jobs:
 
             | Image | Tags |
             |-------|------|
-            | `ghcr.io/sakithasamarathunga33/vps-web` | `${{ steps.tag.outputs.new_tag }}`, `latest` |
-            | `ghcr.io/sakithasamarathunga33/vps-go-api` | `${{ steps.tag.outputs.new_tag }}`, `latest` |
+            | `ghcr.io/sakithasamarathunga33/pulsenode-web` | `${{ steps.tag.outputs.new_tag }}`, `latest` |
+            | `ghcr.io/sakithasamarathunga33/pulsenode-go-api` | `${{ steps.tag.outputs.new_tag }}`, `latest` |
 
             ### Changes
             ${{ steps.tag.outputs.changelog }}

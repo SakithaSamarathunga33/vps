@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # PulseNode — one-command installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/SakithaSamarathunga33/vps/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/SakithaSamarathunga33/PulseNode/main/install.sh | bash
 set -euo pipefail
 
 G='\033[0;32m'; C='\033[0;36m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[1m'; N='\033[0m'
 
-REPO_URL="https://github.com/SakithaSamarathunga33/vps.git"
+REPO_URL="https://github.com/SakithaSamarathunga33/PulseNode.git"
 INSTALL_DIR="${PULSENODE_DIR:-$HOME/pulsenode}"
 [[ "$(id -u)" == "0" ]] && INSTALL_DIR="/opt/pulsenode"
 
@@ -108,6 +108,55 @@ else
 fi
 echo ""
 
+# ── Admin login ────────────────────────────────────────────────────────────────
+# PulseNode can manage Docker, processes, and deployments — the dashboard should
+# never sit on a public IP without a login. Create the admin account up front.
+json_escape() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '%s' "$s"; }
+
+AUTH_ENABLED=""
+if [[ -f .env.local ]]; then
+  OLD_PORT=$(grep '^LISTEN_PORT=' .env.local | cut -d= -f2- || true)
+  if [[ -n "${OLD_PORT}" ]] && curl -fsSL --max-time 3 "http://localhost:${OLD_PORT}/go/api/auth/status" 2>/dev/null | grep -q '"enabled":true'; then
+    AUTH_ENABLED=1
+  fi
+fi
+
+ADMIN_USER=""
+ADMIN_PASS=""
+echo -e "${C}━━━  Login protection  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+if [[ -n "$AUTH_ENABLED" ]]; then
+  echo -e "  ${G}✓ Login protection is already enabled — keeping your existing account${N}"
+else
+  echo -e "  Create an admin account to protect the dashboard."
+  printf "  Admin username [admin]: "
+  read -r ADMIN_USER </dev/tty || ADMIN_USER=""
+  ADMIN_USER="${ADMIN_USER:-admin}"
+  while true; do
+    printf "  Admin password (min 8 chars — leave blank to skip): "
+    read -rs ADMIN_PASS </dev/tty || ADMIN_PASS=""
+    echo ""
+    if [[ -z "$ADMIN_PASS" ]]; then
+      ADMIN_USER=""
+      echo -e "  ${R}⚠ No login set — the dashboard will be OPEN to anyone who can reach this server.${N}"
+      echo -e "  ${Y}  You can enable it later: dashboard → Settings → Security${N}"
+      break
+    fi
+    if (( ${#ADMIN_PASS} < 8 )); then
+      echo -e "  ${R}✗ Password must be at least 8 characters.${N}"
+      continue
+    fi
+    printf "  Confirm password: "
+    read -rs ADMIN_PASS2 </dev/tty || ADMIN_PASS2=""
+    echo ""
+    if [[ "$ADMIN_PASS" != "$ADMIN_PASS2" ]]; then
+      echo -e "  ${R}✗ Passwords don't match — try again.${N}"
+      continue
+    fi
+    break
+  done
+fi
+echo ""
+
 # ── Optional integrations ──────────────────────────────────────────────────────
 echo -e "${C}━━━  Optional integrations (press Enter to skip)  ━━━━━━━━━━━━${N}"
 
@@ -198,6 +247,19 @@ done
 printf "\r  ${G}✓ Services ready${N}          \n"
 echo ""
 
+# ── Enable login protection ────────────────────────────────────────────────────
+if [[ -n "$ADMIN_USER" && -n "$ADMIN_PASS" ]]; then
+  PAYLOAD=$(printf '{"username":"%s","password":"%s"}' "$(json_escape "$ADMIN_USER")" "$(json_escape "$ADMIN_PASS")")
+  if curl -fsSL --max-time 5 -X POST "http://localhost:${LISTEN}/go/api/auth/setup" \
+       -H 'Content-Type: application/json' -d "$PAYLOAD" &>/dev/null; then
+    echo -e "  ${G}✓ Login protection enabled — sign in as '${ADMIN_USER}'${N}"
+  else
+    echo -e "  ${Y}⚠ Could not create the admin account automatically.${N}"
+    echo -e "    Set it up in the dashboard: Settings → Security"
+  fi
+  echo ""
+fi
+
 # ── Done ───────────────────────────────────────────────────────────────────────
 echo -e "${G}${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
 echo -e "${G}${B}  ✓  PulseNode is live!${N}"
@@ -212,5 +274,5 @@ echo -e "    ${C}${BASE_URL}/databases${N}"
 echo ""
 echo -e "  Installed at:  ${Y}${INSTALL_DIR}${N}"
 echo -e "  To stop:       ${Y}${COMPOSE_CMD} down${N}"
-echo -e "  To update:     ${Y}curl -fsSL https://raw.githubusercontent.com/SakithaSamarathunga33/vps/main/install.sh | bash${N}"
+echo -e "  To update:     ${Y}curl -fsSL https://raw.githubusercontent.com/SakithaSamarathunga33/PulseNode/main/install.sh | bash${N}"
 echo -e "${G}${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
