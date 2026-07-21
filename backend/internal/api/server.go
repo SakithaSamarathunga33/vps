@@ -328,7 +328,7 @@ func (s *Server) version(w http.ResponseWriter, r *http.Request) {
 
 	fetchLatest := func() (tag, rawTag, url, body string, err error) {
 		client := &http.Client{Timeout: 5 * time.Second}
-		req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/SakithaSamarathunga33/vps/releases/latest", nil)
+		req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/SakithaSamarathunga33/PulseNode/releases/latest", nil)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		resp, err := client.Do(req)
@@ -358,7 +358,7 @@ func (s *Server) version(w http.ResponseWriter, r *http.Request) {
 			return ""
 		}
 		client := &http.Client{Timeout: 5 * time.Second}
-		req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/SakithaSamarathunga33/vps/commits/"+tag, nil)
+		req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/SakithaSamarathunga33/PulseNode/commits/"+tag, nil)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		resp, err := client.Do(req)

@@ -7,7 +7,7 @@
 
 services:
   web:
-    image: ghcr.io/sakithasamarathunga33/vps-web:latest
+    image: ghcr.io/sakithasamarathunga33/pulsenode-web:latest
 
   go-api:
-    image: ghcr.io/sakithasamarathunga33/vps-go-api:latest
+    image: ghcr.io/sakithasamarathunga33/pulsenode-go-api:latest
