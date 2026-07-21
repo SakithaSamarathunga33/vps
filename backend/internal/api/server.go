@@ -161,6 +161,7 @@ func (s *Server) Routes() http.Handler {
 		r.Delete("/github/app/installations/{id}", s.deleteAppInstallation)
 		r.Get("/github/app/repos", s.githubAppRepos)
 		r.Get("/github/app/installation-details", s.githubAppInstallationDetails)
+		r.Get("/github/app/projects", s.githubAppProjects)
 
 		// Domain settings
 		r.Get("/domain/settings", s.domainSettings)
