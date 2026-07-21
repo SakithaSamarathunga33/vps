@@ -8,11 +8,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
-const apiBase = "https://api.github.com"
+var apiBase = "https://api.github.com"
 
 type Client struct {
 	token string
@@ -142,6 +143,7 @@ func (c *Client) CurrentUser() (*User, error) {
 // ── Repos ─────────────────────────────────────────────────────────────────────
 
 type Repo struct {
+	ID            int64  `json:"id"`
 	Name          string `json:"name"`
 	FullName      string `json:"full_name"`
 	Private       bool   `json:"private"`
@@ -149,6 +151,7 @@ type Repo struct {
 	HTMLURL       string `json:"html_url"`
 	CloneURL      string `json:"clone_url"`
 	Description   string `json:"description"`
+	Language      string `json:"language"`
 }
 
 func (c *Client) ListRepos() ([]Repo, error) {
@@ -312,4 +315,150 @@ func ExchangeCode(code, callbackURL string) (string, error) {
 		return "", fmt.Errorf("github oauth: %s — %s", result.Error, result.ErrorDesc)
 	}
 	return result.AccessToken, nil
+}
+
+// ── Pull requests, issues, commits, workflow runs ──────────────────────────────
+
+type PullRequest struct {
+	ExternalID string `json:"external_id"`
+	Number     int    `json:"number"`
+	Title      string `json:"title"`
+	State      string `json:"state"`
+	Author     string `json:"author"`
+	URL        string `json:"url"`
+}
+
+type Issue struct {
+	ExternalID string `json:"external_id"`
+	Number     int    `json:"number"`
+	Title      string `json:"title"`
+	State      string `json:"state"`
+	URL        string `json:"url"`
+}
+
+type Commit struct {
+	SHA     string `json:"sha"`
+	Message string `json:"message"`
+}
+
+type WorkflowRun struct {
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+}
+
+// ListOpenPullRequests lists open pull requests for a repo.
+func (c *Client) ListOpenPullRequests(owner, repo string) ([]PullRequest, error) {
+	var raw []struct {
+		ID     int64  `json:"id"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		State  string `json:"state"`
+		User   struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		HTMLURL string `json:"html_url"`
+	}
+	if err := c.get(fmt.Sprintf("/repos/%s/%s/pulls?state=open", owner, repo), &raw); err != nil {
+		return nil, err
+	}
+	prs := make([]PullRequest, len(raw))
+	for i, p := range raw {
+		prs[i] = PullRequest{
+			ExternalID: strconv.FormatInt(p.ID, 10),
+			Number:     p.Number,
+			Title:      p.Title,
+			State:      p.State,
+			Author:     p.User.Login,
+			URL:        p.HTMLURL,
+		}
+	}
+	return prs, nil
+}
+
+// ListOpenIssues lists open issues for a repo, excluding pull requests
+// (GitHub's issues API returns PRs alongside real issues).
+func (c *Client) ListOpenIssues(owner, repo string) ([]Issue, error) {
+	var raw []struct {
+		ID          int64           `json:"id"`
+		Number      int             `json:"number"`
+		Title       string          `json:"title"`
+		State       string          `json:"state"`
+		HTMLURL     string          `json:"html_url"`
+		PullRequest json.RawMessage `json:"pull_request,omitempty"`
+	}
+	if err := c.get(fmt.Sprintf("/repos/%s/%s/issues?state=open", owner, repo), &raw); err != nil {
+		return nil, err
+	}
+	issues := make([]Issue, 0, len(raw))
+	for _, it := range raw {
+		if len(it.PullRequest) > 0 {
+			continue
+		}
+		issues = append(issues, Issue{
+			ExternalID: strconv.FormatInt(it.ID, 10),
+			Number:     it.Number,
+			Title:      it.Title,
+			State:      it.State,
+			URL:        it.HTMLURL,
+		})
+	}
+	return issues, nil
+}
+
+// GetLatestCommit returns the most recent commit on a repo's default branch,
+// or nil if the repo has no commits yet (GitHub returns 409 for an empty repo).
+func (c *Client) GetLatestCommit(owner, repo string) (*Commit, error) {
+	req, err := http.NewRequest(http.MethodGet, apiBase+fmt.Sprintf("/repos/%s/%s/commits?per_page=1", owner, repo), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return nil, nil
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("github api /repos/%s/%s/commits: %d", owner, repo, resp.StatusCode)
+	}
+	var commits []struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+		} `json:"commit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&commits); err != nil {
+		return nil, err
+	}
+	if len(commits) == 0 {
+		return nil, nil
+	}
+	msg := commits[0].Commit.Message
+	if i := strings.IndexByte(msg, '\n'); i >= 0 {
+		msg = msg[:i]
+	}
+	return &Commit{SHA: commits[0].SHA, Message: strings.TrimSpace(msg)}, nil
+}
+
+// GetLatestWorkflowRun returns the most recent GitHub Actions run for a repo,
+// or nil if there are none.
+func (c *Client) GetLatestWorkflowRun(owner, repo string) (*WorkflowRun, error) {
+	var raw struct {
+		WorkflowRuns []struct {
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"workflow_runs"`
+	}
+	if err := c.get(fmt.Sprintf("/repos/%s/%s/actions/runs?per_page=1", owner, repo), &raw); err != nil {
+		return nil, err
+	}
+	if len(raw.WorkflowRuns) == 0 {
+		return nil, nil
+	}
+	return &WorkflowRun{Status: raw.WorkflowRuns[0].Status, Conclusion: raw.WorkflowRuns[0].Conclusion}, nil
 }
