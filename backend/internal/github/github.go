@@ -24,15 +24,21 @@ func NewClient(token string) *Client {
 	return &Client{token: token, http: &http.Client{Timeout: 10 * time.Second}}
 }
 
-func (c *Client) get(path string, out any) error {
+// doGet issues an authenticated GET request and returns the raw response.
+// Callers must close resp.Body.
+func (c *Client) doGet(path string) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodGet, apiBase+path, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := c.http.Do(req)
+	return c.http.Do(req)
+}
+
+func (c *Client) get(path string, out any) error {
+	resp, err := c.doGet(path)
 	if err != nil {
 		return err
 	}
@@ -408,14 +414,7 @@ func (c *Client) ListOpenIssues(owner, repo string) ([]Issue, error) {
 // GetLatestCommit returns the most recent commit on a repo's default branch,
 // or nil if the repo has no commits yet (GitHub returns 409 for an empty repo).
 func (c *Client) GetLatestCommit(owner, repo string) (*Commit, error) {
-	req, err := http.NewRequest(http.MethodGet, apiBase+fmt.Sprintf("/repos/%s/%s/commits?per_page=1", owner, repo), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := c.http.Do(req)
+	resp, err := c.doGet(fmt.Sprintf("/repos/%s/%s/commits?per_page=1", owner, repo))
 	if err != nil {
 		return nil, err
 	}
