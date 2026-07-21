@@ -105,6 +105,46 @@ func TestGetLatestCommitReturnsNilForEmptyRepository(t *testing.T) {
 	}
 }
 
+func TestListOpenPullRequestsEmptyResult(t *testing.T) {
+	client := withTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/widgets/pulls" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("state"); got != "open" {
+			t.Fatalf("state = %q, want open", got)
+		}
+		_ = json.NewEncoder(w).Encode([]any{})
+	})
+
+	prs, err := client.ListOpenPullRequests("acme", "widgets")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if prs == nil {
+		t.Fatal("prs = nil, want non-nil empty slice")
+	}
+	if len(prs) != 0 {
+		t.Fatalf("len(prs) = %d, want 0", len(prs))
+	}
+}
+
+func TestListOpenIssuesEmptyResult(t *testing.T) {
+	client := withTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode([]any{})
+	})
+
+	issues, err := client.ListOpenIssues("acme", "widgets")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if issues == nil {
+		t.Fatal("issues = nil, want non-nil empty slice")
+	}
+	if len(issues) != 0 {
+		t.Fatalf("len(issues) = %d, want 0", len(issues))
+	}
+}
+
 func TestGetLatestWorkflowRun(t *testing.T) {
 	client := withTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
