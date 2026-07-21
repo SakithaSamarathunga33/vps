@@ -49,8 +49,12 @@ func buildProjectSummary(repo github.Repo, prs []github.PullRequest, issues []gi
 
 // githubAppProjects aggregates a full GitHub summary (metadata, open PRs,
 // open issues, latest commit, latest workflow run) for every repo across all
-// stored GitHub App installations. A repo or installation that errors is
-// skipped rather than failing the whole request, matching githubAppRepos.
+// stored GitHub App installations. An installation that errors (minting its
+// token or listing its repos) is skipped entirely, matching githubAppRepos.
+// Within a repo, each of the four per-repo GitHub calls degrades
+// independently: a failure (e.g. Issues or Actions disabled on that repo)
+// yields an empty/nil value for that field instead of dropping the whole
+// repo from the response.
 func (s *Server) githubAppProjects(w http.ResponseWriter, r *http.Request) {
 	projects := []ProjectSummary{}
 
@@ -90,19 +94,19 @@ func (s *Server) githubAppProjects(w http.ResponseWriter, r *http.Request) {
 
 			prs, err := client.ListOpenPullRequests(owner, name)
 			if err != nil {
-				continue
+				prs = nil
 			}
 			issues, err := client.ListOpenIssues(owner, name)
 			if err != nil {
-				continue
+				issues = nil
 			}
 			commit, err := client.GetLatestCommit(owner, name)
 			if err != nil {
-				continue
+				commit = nil
 			}
 			workflow, err := client.GetLatestWorkflowRun(owner, name)
 			if err != nil {
-				continue
+				workflow = nil
 			}
 
 			projects = append(projects, buildProjectSummary(repo, prs, issues, commit, workflow))
