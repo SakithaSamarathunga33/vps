@@ -13,27 +13,37 @@ import (
 // so a caller (Corevia) can build a repository dashboard from a single HTTP
 // round trip instead of one GitHub API call per data point.
 type ProjectSummary struct {
-	ExternalID     string               `json:"external_id"`
-	FullName       string               `json:"full_name"`
-	Description    string               `json:"description"`
-	Language       string               `json:"language"`
-	DefaultBranch  string               `json:"default_branch"`
-	LatestCommit   *github.Commit       `json:"latest_commit"`
-	LatestWorkflow *github.WorkflowRun  `json:"latest_workflow"`
-	PullRequests   []github.PullRequest `json:"pull_requests"`
-	Issues         []github.Issue       `json:"issues"`
+	ExternalID     string              `json:"external_id"`
+	FullName       string              `json:"full_name"`
+	Description    string              `json:"description"`
+	Language       string              `json:"language"`
+	DefaultBranch  string              `json:"default_branch"`
+	LatestCommit   *github.Commit      `json:"latest_commit"`
+	LatestWorkflow *github.WorkflowRun `json:"latest_workflow"`
+	// PullRequests carries the contract callers (e.g. Corevia's sync logic)
+	// depend on to tell "no open PRs" apart from "we couldn't fetch them this
+	// time": nil serializes as JSON null and means the underlying
+	// ListOpenPullRequests call failed, so the value is unknown/unavailable
+	// and must NOT be treated as confirmed-zero. A non-nil, possibly empty,
+	// slice serializes as JSON [] and means the fetch succeeded with that
+	// many open PRs (zero included). Callers should leave previously-synced
+	// data alone on null and only reconcile against [] or a populated slice.
+	PullRequests []github.PullRequest `json:"pull_requests"`
+	// Issues follows the exact same null-vs-[] contract as PullRequests, for
+	// ListOpenIssues.
+	Issues []github.Issue `json:"issues"`
 }
 
 // buildProjectSummary assembles a ProjectSummary from already-fetched data.
 // Kept separate from githubAppProjects (which does the DB/GitHub I/O) so it's
-// testable without a fake GitHub server.
+// testable without a fake GitHub server. It intentionally passes prs/issues
+// through unchanged: nil in, nil out (JSON null, meaning "fetch failed,
+// unknown"), and a non-nil (possibly empty) slice in, the same slice out
+// (JSON [], meaning "fetch succeeded, this many results"). The GitHub client
+// methods already preserve this distinction on their own (nil only on error,
+// non-nil `make([]T, ...)` on any success including zero results), so no
+// coalescing is needed or wanted here.
 func buildProjectSummary(repo github.Repo, prs []github.PullRequest, issues []github.Issue, commit *github.Commit, workflow *github.WorkflowRun) ProjectSummary {
-	if prs == nil {
-		prs = []github.PullRequest{}
-	}
-	if issues == nil {
-		issues = []github.Issue{}
-	}
 	return ProjectSummary{
 		ExternalID:     strconv.FormatInt(repo.ID, 10),
 		FullName:       repo.FullName,
@@ -52,9 +62,12 @@ func buildProjectSummary(repo github.Repo, prs []github.PullRequest, issues []gi
 // stored GitHub App installations. An installation that errors (minting its
 // token or listing its repos) is skipped entirely, matching githubAppRepos.
 // Within a repo, each of the four per-repo GitHub calls degrades
-// independently: a failure (e.g. Issues or Actions disabled on that repo)
-// yields an empty/nil value for that field instead of dropping the whole
-// repo from the response.
+// independently: a failure (e.g. Issues or Actions disabled on that repo, or
+// a transient API error) yields a nil value for that field instead of
+// dropping the whole repo from the response. Nil is distinguishable from a
+// confirmed-empty result: it serializes as JSON null (fetch failed, unknown)
+// rather than [] (fetch succeeded, genuinely zero), so callers must not treat
+// a failed field as confirmed-empty.
 func (s *Server) githubAppProjects(w http.ResponseWriter, r *http.Request) {
 	projects := []ProjectSummary{}
 
