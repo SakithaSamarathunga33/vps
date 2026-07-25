@@ -52,9 +52,9 @@ func (s *Server) repoClient(owner, repo string) (*github.Client, github.Repo, er
 	return nil, github.Repo{}, errRepoNotInstalled
 }
 
-// writeGitHubError maps errors onto meaningful statuses so Corevia can tell
-// a stale-sha conflict (409) or missing write permission (403) apart from
-// PulseNode being broken.
+// writeGitHubError maps errors onto meaningful statuses so API consumers can
+// tell a stale-sha conflict (409) or missing write permission (403) apart
+// from PulseNode being broken.
 func writeGitHubError(w http.ResponseWriter, err error) {
 	var apiErr *github.APIStatusError
 	if errors.As(err, &apiErr) {
