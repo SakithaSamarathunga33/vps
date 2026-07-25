@@ -2,6 +2,7 @@ package github
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var apiBase = "https://api.github.com"
@@ -460,4 +462,246 @@ func (c *Client) GetLatestWorkflowRun(owner, repo string) (*WorkflowRun, error) 
 		return nil, nil
 	}
 	return &WorkflowRun{Status: raw.WorkflowRuns[0].Status, Conclusion: raw.WorkflowRuns[0].Conclusion}, nil
+}
+
+// ── Repo contents & history ───────────────────────────────────────────────────
+
+// APIStatusError carries the GitHub HTTP status to handlers so 409 (stale
+// blob sha) and 403 (missing Contents write permission) survive the trip
+// instead of collapsing into a generic error.
+type APIStatusError struct {
+	StatusCode int
+	Msg        string
+}
+
+func (e *APIStatusError) Error() string {
+	return fmt.Sprintf("github api: %d %s", e.StatusCode, e.Msg)
+}
+
+type CommitDetail struct {
+	SHA         string `json:"sha"`
+	Message     string `json:"message"`
+	AuthorName  string `json:"author_name"`
+	AuthorLogin string `json:"author_login"`
+	Date        string `json:"date"`
+	URL         string `json:"url"`
+}
+
+type TreeEntry struct {
+	Path string `json:"path"`
+	Type string `json:"type"` // "blob" | "tree"
+	Size int64  `json:"size"`
+}
+
+type FileContent struct {
+	Path     string `json:"path"`
+	Content  string `json:"content"`
+	SHA      string `json:"sha"`
+	Size     int64  `json:"size"`
+	Encoding string `json:"encoding"` // "text" | "binary" | "too_large"
+}
+
+type FileUpdateResult struct {
+	SHA       string `json:"sha"`
+	CommitURL string `json:"commit_url"`
+}
+
+const maxEditableFileSize = 1 << 20 // 1 MB
+
+// escapeRepoPath escapes each path segment but keeps the "/" separators.
+func escapeRepoPath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, seg := range parts {
+		parts[i] = url.PathEscape(seg)
+	}
+	return strings.Join(parts, "/")
+}
+
+func statusError(resp *http.Response, context string) *APIStatusError {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	msg := strings.TrimSpace(string(b))
+	if msg == "" {
+		msg = context
+	}
+	return &APIStatusError{StatusCode: resp.StatusCode, Msg: msg}
+}
+
+// ListRecentCommits returns up to limit commits from the default branch,
+// newest first. limit outside 1..100 falls back to 50. An empty repo
+// (GitHub 409) yields an empty slice, matching GetLatestCommit.
+func (c *Client) ListRecentCommits(owner, repo string, limit int) ([]CommitDetail, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	resp, err := c.doGet(fmt.Sprintf("/repos/%s/%s/commits?per_page=%d", owner, repo, limit))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return []CommitDetail{}, nil
+	}
+	if resp.StatusCode >= 300 {
+		return nil, statusError(resp, fmt.Sprintf("/repos/%s/%s/commits", owner, repo))
+	}
+	var raw []struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+			Author  struct {
+				Name string `json:"name"`
+				Date string `json:"date"`
+			} `json:"author"`
+		} `json:"commit"`
+		Author *struct {
+			Login string `json:"login"`
+		} `json:"author"`
+		HTMLURL string `json:"html_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+	out := make([]CommitDetail, len(raw))
+	for i, item := range raw {
+		msg := item.Commit.Message
+		if idx := strings.IndexByte(msg, '\n'); idx >= 0 {
+			msg = msg[:idx]
+		}
+		login := ""
+		if item.Author != nil {
+			login = item.Author.Login
+		}
+		out[i] = CommitDetail{
+			SHA:         item.SHA,
+			Message:     strings.TrimSpace(msg),
+			AuthorName:  item.Commit.Author.Name,
+			AuthorLogin: login,
+			Date:        item.Commit.Author.Date,
+			URL:         item.HTMLURL,
+		}
+	}
+	return out, nil
+}
+
+// GetTree returns the full recursive tree of ref ("" means HEAD, i.e. the
+// default branch).
+func (c *Client) GetTree(owner, repo, ref string) ([]TreeEntry, error) {
+	if ref == "" {
+		ref = "HEAD"
+	}
+	resp, err := c.doGet(fmt.Sprintf("/repos/%s/%s/git/trees/%s?recursive=1", owner, repo, url.PathEscape(ref)))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, statusError(resp, fmt.Sprintf("/repos/%s/%s/git/trees/%s", owner, repo, ref))
+	}
+	var raw struct {
+		Tree []TreeEntry `json:"tree"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+	if raw.Tree == nil {
+		raw.Tree = []TreeEntry{}
+	}
+	return raw.Tree, nil
+}
+
+// GetFile returns one file's decoded content and blob sha. Files over 1 MB
+// come back with Encoding "too_large" and no content (GitHub omits inline
+// content for them too); non-UTF-8 content comes back as "binary".
+func (c *Client) GetFile(owner, repo, path, ref string) (*FileContent, error) {
+	p := fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, escapeRepoPath(path))
+	if ref != "" {
+		p += "?ref=" + url.QueryEscape(ref)
+	}
+	resp, err := c.doGet(p)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, statusError(resp, p)
+	}
+	var raw struct {
+		Path     string `json:"path"`
+		SHA      string `json:"sha"`
+		Size     int64  `json:"size"`
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+	out := &FileContent{Path: raw.Path, SHA: raw.SHA, Size: raw.Size}
+	if raw.Size > maxEditableFileSize || raw.Encoding == "none" {
+		out.Encoding = "too_large"
+		return out, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(raw.Content, "\n", ""))
+	if err != nil {
+		return nil, err
+	}
+	if !utf8.Valid(decoded) || strings.ContainsRune(string(decoded), 0) {
+		out.Encoding = "binary"
+		return out, nil
+	}
+	out.Content = string(decoded)
+	out.Encoding = "text"
+	return out, nil
+}
+
+// UpdateFile commits new content to path on branch. sha must be the file's
+// current blob sha; a stale sha surfaces as *APIStatusError with 409 (GitHub
+// answers 409 or 422 for that case — both are normalized to 409).
+func (c *Client) UpdateFile(owner, repo, path, branch, message, content, sha string) (*FileUpdateResult, error) {
+	body := map[string]any{
+		"message": message,
+		"content": base64.StdEncoding.EncodeToString([]byte(content)),
+		"sha":     sha,
+	}
+	if branch != "" {
+		body["branch"] = branch
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodPut,
+		apiBase+fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, escapeRepoPath(path)),
+		bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusUnprocessableEntity {
+		e := statusError(resp, "stale file sha")
+		e.StatusCode = http.StatusConflict
+		return nil, e
+	}
+	if resp.StatusCode >= 300 {
+		return nil, statusError(resp, fmt.Sprintf("/repos/%s/%s/contents/%s", owner, repo, path))
+	}
+	var raw struct {
+		Content struct {
+			SHA string `json:"sha"`
+		} `json:"content"`
+		Commit struct {
+			HTMLURL string `json:"html_url"`
+		} `json:"commit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+	return &FileUpdateResult{SHA: raw.Content.SHA, CommitURL: raw.Commit.HTMLURL}, nil
 }
