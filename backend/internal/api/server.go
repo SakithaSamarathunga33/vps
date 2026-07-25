@@ -162,6 +162,10 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/github/app/repos", s.githubAppRepos)
 		r.Get("/github/app/installation-details", s.githubAppInstallationDetails)
 		r.Get("/github/app/projects", s.githubAppProjects)
+		r.Get("/github/app/repos/{owner}/{repo}/commits", s.githubRepoCommits)
+		r.Get("/github/app/repos/{owner}/{repo}/tree", s.githubRepoTree)
+		r.Get("/github/app/repos/{owner}/{repo}/file", s.githubRepoFile)
+		r.Put("/github/app/repos/{owner}/{repo}/file", s.githubRepoUpdateFile)
 
 		// Domain settings
 		r.Get("/domain/settings", s.domainSettings)
