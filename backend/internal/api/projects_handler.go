@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,10 +36,17 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if projects == nil {
-		projects = []db.Project{}
+	// Merge in apps already hosted on the VPS behind a domain but not deployed
+	// through PulseNode, so the projects list reflects everything actually
+	// live on the box, not just what this app built.
+	items := make([]any, 0, len(projects)+4)
+	for _, p := range projects {
+		items = append(items, p)
 	}
-	writeJSON(w, http.StatusOK, projects)
+	for _, ext := range s.discoverExternalProjects(r.Context()) {
+		items = append(items, ext)
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
@@ -115,6 +123,15 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if strings.HasPrefix(id, externalIDPrefix) {
+		ext, ok := s.getExternalProject(r.Context(), id)
+		if !ok {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, ext)
+		return
+	}
 	proj, err := s.db.GetProject(id)
 	if err != nil {
 		writeError(w, err)

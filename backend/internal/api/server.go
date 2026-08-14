@@ -181,7 +181,6 @@ func (s *Server) Routes() http.Handler {
 
 		// Projects (deploy)
 		r.Get("/projects/free-port", s.freePort)
-		r.Get("/projects/discovered", s.listDiscoveredProjects)
 		r.Get("/projects", s.listProjects)
 		r.Post("/projects", s.createProject)
 		r.Get("/projects/{id}", s.getProject)

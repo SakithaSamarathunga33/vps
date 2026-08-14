@@ -1,16 +1,12 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-
-	"pulsenode/backend/internal/docker"
 )
 
 func (s *Server) requireDocker(w http.ResponseWriter) bool {
@@ -219,61 +215,4 @@ func (s *Server) dockerHeartbeats(w http.ResponseWriter, r *http.Request) {
 		out = append(out, containerHeartbeats{Name: c.Name, Beats: points})
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-type discoveredProject struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Image   string   `json:"image"`
-	State   string   `json:"state"`
-	Domains []string `json:"domains"`
-	Ports   string   `json:"ports"`
-	Created string   `json:"created"`
-	Uptime  string   `json:"uptime"`
-}
-
-// discoveredProjects finds containers that are Traefik-routed to a domain but
-// were not deployed through PulseNode (no pulsenode.project label) — e.g.
-// manually docker-compose'd stacks or deployments that predate this project.
-func (s *Server) discoveredProjects(ctx context.Context) []discoveredProject {
-	out := []discoveredProject{}
-	if s.docker == nil {
-		return out
-	}
-	labeled, err := s.docker.ContainersWithLabels(ctx)
-	if err != nil {
-		return out
-	}
-	containers, err := s.docker.Containers(ctx)
-	if err != nil {
-		return out
-	}
-	byName := make(map[string]docker.Container, len(containers))
-	for _, c := range containers {
-		byName[c.Name] = c
-	}
-
-	for _, lc := range labeled {
-		if _, managed := lc.Labels["pulsenode.project"]; managed {
-			continue
-		}
-		hosts := parseTraefikHosts(lc.Labels)
-		if len(hosts) == 0 {
-			continue
-		}
-		c := byName[lc.Name]
-		out = append(out, discoveredProject{
-			ID: c.ID, Name: lc.Name, Image: c.Image, State: lc.State,
-			Domains: hosts, Ports: c.Ports, Created: c.Created, Uptime: c.Uptime,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
-}
-
-func (s *Server) listDiscoveredProjects(w http.ResponseWriter, r *http.Request) {
-	if !s.requireDocker(w) {
-		return
-	}
-	writeJSON(w, http.StatusOK, s.discoveredProjects(r.Context()))
 }

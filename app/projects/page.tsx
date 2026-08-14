@@ -2,10 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
-import {
-  Plus, RefreshCw, FolderGit2, GitBranch, Globe, Circle, PlayCircle, ChevronDown, ChevronRight,
-  Boxes, Radar, Container as ContainerIcon, Hash, Clock,
-} from "lucide-react"
+import { Plus, RefreshCw, FolderGit2, GitBranch, Globe, Circle, PlayCircle, ChevronDown, ChevronRight, Boxes, Server } from "lucide-react"
 
 const GO_API = process.env.NEXT_PUBLIC_GO_API ?? ""
 
@@ -19,20 +16,11 @@ type Project = {
   BuildMethod: string
   BaseDir: string
   CreatedAt: string
-}
-
-// A container that's already hosted on this VPS (routed to a domain via
-// Traefik) but wasn't deployed through PulseNode — e.g. a manually
-// docker-compose'd stack, or something that predates this project.
-type DiscoveredProject = {
-  id: string
-  name: string
-  image: string
-  state: string
-  domains: string[]
-  ports: string
-  created: string
-  uptime: string
+  // Set for apps already hosted on the VPS (behind a domain) that weren't
+  // deployed through PulseNode — discovered from running containers rather
+  // than the projects table, so RepoURL/Branch/BuildMethod are "".
+  External?: boolean
+  Image?: string
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -74,11 +62,21 @@ function ProjectCard({ proj, compact }: { proj: Project; compact?: boolean }) {
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
             style={{ background: "var(--bg-3)" }}>
-            <FolderGit2 size={16} style={{ color: "var(--acc)" }} />
+            {proj.External
+              ? <Server size={16} style={{ color: "var(--acc)" }} />
+              : <FolderGit2 size={16} style={{ color: "var(--acc)" }} />}
           </div>
           <div className="min-w-0">
             <p className="font-medium text-sm flex items-center gap-1.5" style={{ color: "var(--fg)" }}>
               {proj.Name}
+              {proj.External && (
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                  style={{ background: "var(--bg-3)", color: "var(--fg-3)" }}
+                >
+                  Hosted on VPS
+                </span>
+              )}
               {proj.BaseDir && (
                 <span
                   className="text-[10px] px-1.5 py-0.5 rounded font-medium capitalize"
@@ -89,7 +87,7 @@ function ProjectCard({ proj, compact }: { proj: Project; compact?: boolean }) {
               )}
             </p>
             <p className="text-xs truncate mt-0.5" style={{ color: "var(--fg-3)" }}>
-              {proj.RepoURL.replace("https://github.com/", "")}
+              {proj.External ? proj.Image : proj.RepoURL.replace("https://github.com/", "")}
             </p>
           </div>
         </div>
@@ -98,18 +96,22 @@ function ProjectCard({ proj, compact }: { proj: Project; compact?: boolean }) {
         </div>
       </div>
       <div className="flex items-center gap-4 mt-3 text-xs" style={{ color: "var(--fg-3)" }}>
-        <span className="flex items-center gap-1">
-          <GitBranch size={11} />
-          {proj.Branch}
-        </span>
+        {!proj.External && (
+          <span className="flex items-center gap-1">
+            <GitBranch size={11} />
+            {proj.Branch}
+          </span>
+        )}
         <span className="flex items-center gap-1">
           <Globe size={11} />
           {proj.Domain}
         </span>
-        <span className="flex items-center gap-1 ml-auto">
-          <PlayCircle size={11} />
-          {proj.BuildMethod}
-        </span>
+        {!proj.External && (
+          <span className="flex items-center gap-1 ml-auto">
+            <PlayCircle size={11} />
+            {proj.BuildMethod}
+          </span>
+        )}
       </div>
     </Link>
   )
@@ -170,71 +172,9 @@ function RepoGroup({ repoUrl, members }: { repoUrl: string; members: Project[] }
   )
 }
 
-// A hosted-but-unmanaged container, expandable in place to show its
-// container/domain details (there's no PulseNode project record to link to).
-function DiscoveredCard({ proj }: { proj: DiscoveredProject }) {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <div className="rounded-xl overflow-hidden" style={{ background: "var(--bg-1)", border: "1px dashed var(--border)" }}>
-      <button
-        onClick={() => setExpanded(e => !e)}
-        className="w-full flex items-start justify-between gap-4 p-4 text-left transition-colors hover:opacity-90"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-            style={{ background: "var(--bg-3)" }}>
-            <ContainerIcon size={16} style={{ color: "var(--fg-3)" }} />
-          </div>
-          <div className="min-w-0">
-            <p className="font-medium text-sm flex items-center gap-1.5" style={{ color: "var(--fg)" }}>
-              {proj.name}
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded font-medium"
-                style={{ background: "var(--bg-3)", color: "var(--fg-3)" }}
-              >
-                not managed
-              </span>
-            </p>
-            <p className="text-xs truncate mt-0.5 flex items-center gap-1" style={{ color: "var(--fg-3)" }}>
-              <Globe size={11} />
-              {proj.domains.join(", ")}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <StatusBadge status={proj.state} />
-          {expanded ? <ChevronDown size={16} style={{ color: "var(--fg-3)" }} /> : <ChevronRight size={16} style={{ color: "var(--fg-3)" }} />}
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="px-4 pb-4 pt-1 space-y-2 text-xs" style={{ color: "var(--fg-3)" }}>
-          {[
-            { label: "Image", value: proj.image },
-            { label: "Container ID", value: proj.id },
-            { label: "Ports", value: proj.ports || "—" },
-            { label: "Uptime", value: proj.uptime },
-            { label: "Created", value: proj.created },
-          ].map(row => (
-            <div key={row.label} className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-1.5">
-                {row.label === "Container ID" ? <Hash size={11} /> : row.label === "Created" ? <Clock size={11} /> : null}
-                {row.label}
-              </span>
-              <span className="font-mono truncate" style={{ color: "var(--fg)" }}>{row.value}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 export default function ProjectsPage() {
-  const [projects, setProjects]     = useState<Project[]>([])
-  const [discovered, setDiscovered] = useState<DiscoveredProject[]>([])
-  const [loading, setLoading]       = useState(true)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loading, setLoading]   = useState(true)
 
   const fetchProjects = async () => {
     try {
@@ -244,14 +184,7 @@ export default function ProjectsPage() {
     finally { setLoading(false) }
   }
 
-  const fetchDiscovered = async () => {
-    try {
-      const r = await fetch(`${GO_API}/api/projects/discovered`)
-      if (r.ok) setDiscovered(await r.json())
-    } catch { /* ignore */ }
-  }
-
-  useEffect(() => { fetchProjects(); fetchDiscovered() }, [])
+  useEffect(() => { fetchProjects() }, [])
 
   if (loading) {
     return (
@@ -284,7 +217,7 @@ export default function ProjectsPage() {
         <div>
           <h1 className="text-xl font-semibold" style={{ color: "var(--fg)" }}>Projects</h1>
           <p className="text-sm mt-0.5" style={{ color: "var(--fg-3)" }}>
-            {projects.length} deployed project{projects.length !== 1 ? "s" : ""}
+            {projects.length} project{projects.length !== 1 ? "s" : ""}
           </p>
         </div>
         <Link
@@ -319,21 +252,6 @@ export default function ProjectsPage() {
       ) : (
         <div className="grid gap-3">
           {items.map(item => <div key={item.key}>{item.node}</div>)}
-        </div>
-      )}
-
-      {discovered.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Radar size={14} style={{ color: "var(--fg-3)" }} />
-            <h2 className="text-sm font-medium" style={{ color: "var(--fg)" }}>Other Hosted Projects</h2>
-            <span className="text-xs" style={{ color: "var(--fg-4)" }}>
-              {discovered.length} found on this VPS, not deployed through PulseNode
-            </span>
-          </div>
-          <div className="grid gap-3">
-            {discovered.map(d => <DiscoveredCard key={d.id || d.name} proj={d} />)}
-          </div>
         </div>
       )}
     </div>

@@ -25,7 +25,7 @@ type Network struct { Name string `json:"name"`; Driver string `json:"driver"`; 
 type Database struct { Name string `json:"name"`; ContainerID string `json:"containerId"`; Engine string `json:"engine"`; Version string `json:"version"`; Host string `json:"host"`; Port int `json:"port"`; Size string `json:"size"`; Conns int `json:"conns"`; MaxConns int `json:"maxConns"`; QPS int `json:"qps"`; Slow int `json:"slow"`; State string `json:"state"` }
 type Stat struct { ContainerID string `json:"containerId"`; CPU float64 `json:"cpu"`; RAM float64 `json:"ram"` }
 type ContainerStat struct { ID string `json:"id"`; Name string `json:"name"`; Image string `json:"image"`; State string `json:"state"`; CPU float64 `json:"cpu"`; RAMPct float64 `json:"ramPct"`; RAMMb float64 `json:"ramMb"`; RAMLimitMb float64 `json:"ramLimitMb"` }
-type ContainerLabels struct { Name string; State string; Labels map[string]string }
+type ContainerLabels struct { ID string; Name string; State string; Labels map[string]string }
 
 func New() (*Client, error) {
 	transport := &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) { return (&net.Dialer{}).DialContext(ctx, "unix", "/var/run/docker.sock") }}
@@ -46,10 +46,10 @@ func (c *Client) Containers(ctx context.Context) ([]Container, error) {
 // ContainersWithLabels lists all containers with their raw labels, used for
 // discovering Traefik/Caddy domain routing labels.
 func (c *Client) ContainersWithLabels(ctx context.Context) ([]ContainerLabels, error) {
-	var raw []struct { Names []string `json:"Names"`; State string `json:"State"`; Labels map[string]string `json:"Labels"` }
+	var raw []struct { ID string `json:"Id"`; Names []string `json:"Names"`; State string `json:"State"`; Labels map[string]string `json:"Labels"` }
 	if err := c.do(ctx, http.MethodGet, "/containers/json?all=true", nil, &raw); err != nil { return nil, err }
 	out := []ContainerLabels{}
-	for _, item := range raw { name := ""; if len(item.Names)>0 { name = strings.TrimPrefix(item.Names[0], "/") }; out = append(out, ContainerLabels{Name: name, State: item.State, Labels: item.Labels}) }
+	for _, item := range raw { name := ""; if len(item.Names)>0 { name = strings.TrimPrefix(item.Names[0], "/") }; out = append(out, ContainerLabels{ID: shortID(item.ID), Name: name, State: item.State, Labels: item.Labels}) }
 	return out, nil
 }
 

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation"
 import {
   RefreshCw, Play, Trash2, Globe, GitBranch, Circle, Clock,
   ChevronLeft, Terminal, History, Settings2, ExternalLink, Check, Save, Zap, RotateCcw, Webhook,
+  Server, Square, RotateCw, Box,
 } from "lucide-react"
 import Link from "next/link"
 import { getSocket } from "@/lib/socket"
@@ -17,6 +18,9 @@ type Project = {
   Domain: string; Status: string; BuildMethod: string; Port: number
   BuildCommand: string; EnvVars: string; BackendEnvVars: string; BaseDir: string; CreatedAt: string
   AutoDeploy: boolean; LastCommitSHA: string
+  // Set for apps already hosted on the VPS (behind a domain) that weren't
+  // deployed through PulseNode — see ExternalProjectView below.
+  External?: boolean; Image?: string; Ports?: string; ContainerID?: string
 }
 type Deployment = {
   ID: string; Status: string; Trigger: string
@@ -37,6 +41,159 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       <label className="text-xs mb-1.5 block font-medium" style={{ color: "var(--fg-3)" }}>{label}</label>
       {children}
       {hint && <p className="text-[10px] mt-1" style={{ color: "var(--fg-4)" }}>{hint}</p>}
+    </div>
+  )
+}
+
+// Read-only(ish) detail view for an app already hosted on the VPS behind a
+// domain but not deployed through PulseNode (discovered from a running
+// container, not the projects table — see backend discoverExternalProjects).
+// No settings/redeploy/rollback, since there's no repo or build config for
+// it here; container start/stop/restart and logs reuse the generic docker
+// endpoints the Containers page uses.
+function ExternalProjectView({ project }: { project: Project }) {
+  const containerID = project.ContainerID ?? ""
+  const [status, setStatus] = useState(project.Status)
+  const [logs, setLogs] = useState("")
+  const [loadingLogs, setLoadingLogs] = useState(true)
+  const [acting, setActing] = useState<string | null>(null)
+  const logsRef = useRef<HTMLDivElement>(null)
+
+  const fetchLogs = useCallback(async () => {
+    setLoadingLogs(true)
+    try {
+      const r = await fetch(`${GO_API}/api/docker/logs/${containerID}?tail=300`)
+      if (r.ok) setLogs((await r.json()).logs ?? "")
+    } catch { /* ignore */ }
+    finally { setLoadingLogs(false) }
+  }, [containerID])
+
+  useEffect(() => { fetchLogs() }, [fetchLogs])
+  useEffect(() => {
+    if (logsRef.current) logsRef.current.scrollTop = logsRef.current.scrollHeight
+  }, [logs])
+
+  const runAction = async (action: "start" | "stop" | "restart") => {
+    setActing(action)
+    try {
+      const r = await fetch(`${GO_API}/api/docker/${action}/${containerID}`, { method: "POST" })
+      if (r.ok) {
+        setStatus(action === "stop" ? "exited" : "running")
+        await fetchLogs()
+      }
+    } finally { setActing(null) }
+  }
+
+  return (
+    <div className="flex flex-col h-screen overflow-hidden">
+      <div className="flex-shrink-0 px-6 pt-5 pb-4 space-y-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        <Link href="/projects" className="text-xs flex items-center gap-1 w-fit" style={{ color: "var(--fg-3)" }}>
+          <ChevronLeft size={13} /> Projects
+        </Link>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-lg font-semibold flex items-center gap-2" style={{ color: "var(--fg)" }}>
+              <Server size={16} style={{ color: "var(--acc)" }} />
+              {project.Name}
+              <span
+                className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full capitalize"
+                style={{
+                  background: (STATUS_COLOR[status] ?? "var(--fg-4)") + "20",
+                  color: STATUS_COLOR[status] ?? "var(--fg-4)",
+                }}
+              >
+                <Circle size={6} fill="currentColor" />
+                {status}
+              </span>
+            </h1>
+            <div className="flex items-center gap-3 text-xs mt-1" style={{ color: "var(--fg-3)" }}>
+              <a
+                href={`https://${project.Domain}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 hover:underline"
+                style={{ color: "var(--acc)" }}
+              >
+                <Globe size={11} />
+                {project.Domain}
+                <ExternalLink size={9} />
+              </a>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => runAction("restart")}
+              disabled={acting !== null}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-60"
+              style={{ background: "var(--bg-2)", color: "var(--fg)", border: "1px solid var(--border)" }}
+            >
+              <RotateCw size={13} className={acting === "restart" ? "animate-spin" : ""} />
+              Restart
+            </button>
+            {status === "running" ? (
+              <button
+                onClick={() => runAction("stop")}
+                disabled={acting !== null}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-60"
+                style={{ background: "var(--bg-2)", color: "var(--err)", border: "1px solid var(--border)" }}
+              >
+                <Square size={13} />
+                Stop
+              </button>
+            ) : (
+              <button
+                onClick={() => runAction("start")}
+                disabled={acting !== null}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-60"
+                style={{ background: "var(--acc)", color: "#fff" }}
+              >
+                <Play size={13} />
+                Start
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-hidden flex flex-col">
+        <div className="flex-shrink-0 p-6 pb-0">
+          <div className="rounded-xl p-5" style={{ background: "var(--bg-2)", border: "1px solid var(--border)" }}>
+            <p className="text-[11px] mb-3" style={{ color: "var(--fg-4)" }}>
+              Hosted on this VPS behind a domain, but not deployed through PulseNode — read-only details, pulled live from Docker.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+              {[
+                { label: "Image", value: project.Image || "—" },
+                { label: "Ports", value: project.Ports || "—" },
+                { label: "Container", value: containerID || "—" },
+                { label: "Created", value: project.CreatedAt || "—" },
+              ].map(row => (
+                <div key={row.label}>
+                  <p className="text-[10px] mb-0.5" style={{ color: "var(--fg-4)" }}>{row.label}</p>
+                  <p className="font-mono text-xs truncate flex items-center gap-1" style={{ color: "var(--fg)" }}>
+                    {row.label === "Container" && <Box size={11} style={{ color: "var(--fg-4)" }} />}
+                    {row.value}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-0 p-6">
+          <TerminalWindow className="h-full" bodyRef={logsRef} title={`${project.Name} — container logs`}>
+            {loadingLogs ? (
+              <p style={{ color: "#6b7280" }}>Loading logs…</p>
+            ) : logs ? (
+              logs.split("\n").map((line, i) => (
+                <div key={i} style={{ color: "#e2e8f0", wordBreak: "break-all" }}>{line}</div>
+              ))
+            ) : (
+              <p style={{ color: "#6b7280" }}>No logs.</p>
+            )}
+          </TerminalWindow>
+        </div>
+      </div>
     </div>
   )
 }
@@ -115,7 +272,7 @@ export default function ProjectDetailPage() {
   // Populate the settings form once the project (by ID) is loaded — keyed on ID
   // so background status refreshes don't clobber in-progress edits.
   useEffect(() => {
-    if (!project) return
+    if (!project || project.External) return
     const toEnvText = (json: string) => {
       try {
         const obj = JSON.parse(json || "{}")
@@ -325,6 +482,10 @@ export default function ProjectDetailPage() {
         </Link>
       </div>
     )
+  }
+
+  if (project.External) {
+    return <ExternalProjectView project={project} />
   }
 
   return (
